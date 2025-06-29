@@ -1,0 +1,1849 @@
+{
+  "name": "BuildLabs Content Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1300,
+        380
+      ],
+      "id": "845db651-69f1-4762-a0e3-508fdc7395ba",
+      "name": "Main Workflow Trigger"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manual-content-trigger",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1300,
+        180
+      ],
+      "id": "0bbe9d3c-9229-4216-9895-16b162a924b3",
+      "name": "Manual Content Trigger",
+      "webhookId": "86633fc6-01db-4622-926b-c8e145566e66"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "emergency-publish",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1300,
+        580
+      ],
+      "id": "74df97a0-d77d-4ff8-acd5-9a9ab9b4906b",
+      "name": "Emergency Publish Trigger",
+      "webhookId": "025f91d5-6aed-4074-a6a7-6178fad58eed"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        -1100,
+        380
+      ],
+      "id": "e43a1722-adce-41be-bb6d-cc2ed53c7dbb",
+      "name": "Trigger Merger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-source",
+              "leftValue": "={{ $json.source || 'scheduled' }}",
+              "rightValue": "emergency",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        380
+      ],
+      "id": "fe4a09ce-ce3e-44b3-a790-c3c4513e74bd",
+      "name": "Route Emergency Content"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.NOTION_API_URL }}/databases/{{ $vars.NOTION_CONTENT_DB_ID }}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ $json.source === 'emergency' ? \n  {\"property\": \"Status\", \"select\": {\"equals\": \"Emergency\"}} : \n  {\"and\": [\n    {\"property\": \"Status\", \"select\": {\"equals\": \"Ready\"}},\n    {\"property\": \"Scheduled Date\", \"date\": {\"on_or_before\": new Date().toISOString().split('T')[0]}}\n  ]} }}"
+            },
+            {
+              "name": "sorts",
+              "value": "={{ [{\"property\": \"Priority\", \"direction\": \"descending\"}] }}"
+            },
+            {
+              "name": "page_size",
+              "value": 3
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -700,
+        280
+      ],
+      "id": "166ab534-f6a9-43f0-ba3d-4bee9dc0018b",
+      "name": "Fetch Content Topics",
+      "credentials": {
+        "notionApi": {
+          "id": "aK9i8wUg0LlOFfJm",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "topics-available",
+              "leftValue": "={{ $json.results.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        280
+      ],
+      "id": "97063cac-d50c-42b7-b05a-ec67754acb9f",
+      "name": "Validate Topics Available"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhanced topic classification and routing\nconst topics = $json.results;\nconst classifiedTopics = [];\n\nfor (const topic of topics) {\n  const topicData = {\n    id: topic.id,\n    title: topic.properties.Topic?.title?.[0]?.plain_text || 'Untitled',\n    pillar: topic.properties.Pillar?.select?.name || 'General',\n    contentType: topic.properties['Content Type']?.select?.name || 'LinkedIn Post',\n    priority: topic.properties.Priority?.select?.name || 'Medium',\n    targetPlatforms: topic.properties['Target Platforms']?.multi_select?.map(p => p.name) || ['LinkedIn'],\n    deadline: topic.properties.Deadline?.date?.start,\n    keywords: topic.properties.Keywords?.rich_text?.[0]?.plain_text?.split(',').map(k => k.trim()) || [],\n    aiComplexity: topic.properties['AI Complexity']?.select?.name || 'Standard',\n    visualRequired: topic.properties['Visual Required']?.checkbox || true,\n    emergencyFlag: topic.properties.Status?.select?.name === 'Emergency'\n  };\n  \n  // Classify content type for routing\n  topicData.workflowType = determineWorkflowType(topicData);\n  \n  classifiedTopics.push(topicData);\n}\n\nfunction determineWorkflowType(topic) {\n  if (topic.emergencyFlag) return 'emergency';\n  if (topic.contentType === 'Product Teardown') return 'teardown';\n  if (topic.contentType === 'Thread') return 'thread';\n  if (topic.contentType === 'Carousel') return 'carousel';\n  if (topic.pillar === 'Internal Learnings') return 'internal';\n  return 'standard';\n}\n\nreturn classifiedTopics.map(topic => ({ json: topic }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        280
+      ],
+      "id": "2bb9f958-ab2b-45c3-a52e-3f05de58e596",
+      "name": "Classify Content Types"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-standard",
+              "leftValue": "={{ $json.workflowType }}",
+              "rightValue": "standard",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        80
+      ],
+      "id": "12629306-2135-4073-a695-2c60a2fa0c1d",
+      "name": "Route: Standard Content"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-teardown",
+              "leftValue": "={{ $json.workflowType }}",
+              "rightValue": "teardown",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        280
+      ],
+      "id": "f1445fe1-6c7f-4069-92e4-0e20b073de01",
+      "name": "Route: Product Teardown"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-thread",
+              "leftValue": "={{ $json.workflowType }}",
+              "rightValue": "thread",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        480
+      ],
+      "id": "cadb86ee-4726-4a24-8083-3bd4f589f66e",
+      "name": "Route: X Thread"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-emergency",
+              "leftValue": "={{ $json.emergencyFlag }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        680
+      ],
+      "id": "02b38fbb-ca4d-4ee6-80be-5bcd1367bce2",
+      "name": "Route: Emergency Content"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.APPIFY_API_URL }}/scrape/youtube",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.keywords.join(' ') || $json.title }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.aiComplexity === 'Deep' ? 30 : 20 }}"
+            },
+            {
+              "name": "sort",
+              "value": "engagement"
+            },
+            {
+              "name": "duration",
+              "value": "short"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.APPIFY_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        100,
+        -240
+      ],
+      "id": "3b54c028-2dd1-4a85-913a-1d03b04d93a6",
+      "name": "Research: YouTube (Standard)"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.APPIFY_API_URL }}/scrape/twitter",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.keywords.join(' ') || $json.title }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.aiComplexity === 'Deep' ? 50 : 30 }}"
+            },
+            {
+              "name": "sort",
+              "value": "engagement"
+            },
+            {
+              "name": "lang",
+              "value": "en"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.APPIFY_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        100,
+        -20
+      ],
+      "id": "3d4e6efb-a22e-412a-aee0-8ebfc20579e3",
+      "name": "Research: X/Twitter (Standard)"
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/customsearch/v1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "{{ $env.GOOGLE_SEARCH_API_KEY }}"
+            },
+            {
+              "name": "cx",
+              "value": "{{ $env.GOOGLE_SEARCH_ENGINE_ID }}"
+            },
+            {
+              "name": "q",
+              "value": "={{ ($json.keywords.join(' ') || $json.title) + ' site:reddit.com OR site:indiehackers.com' }}"
+            },
+            {
+              "name": "num",
+              "value": 10
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        100,
+        200
+      ],
+      "id": "2b7174f3-e1ef-447d-b4e9-6ca60a2de99e",
+      "name": "Research: Forums (Standard)"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.APPIFY_API_URL }}/scrape/product",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "product_name",
+              "value": "={{ $json.title.replace('Teardown:', '').trim() }}"
+            },
+            {
+              "name": "include_pricing",
+              "value": true
+            },
+            {
+              "name": "include_features",
+              "value": true
+            },
+            {
+              "name": "include_reviews",
+              "value": true
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.APPIFY_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        400
+      ],
+      "id": "6412bf3f-2747-4bcc-9614-da593de08bce",
+      "name": "Research: Product Data"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        300,
+        80
+      ],
+      "id": "e48526b8-ef91-4e25-b286-763acd7fa604",
+      "name": "Merge: Standard Research"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Advanced research compilation with error handling\ntry {\n  const allInputs = $input.all();\n  const topicData = allInputs.find(item => item.json.title) || { json: { title: 'Unknown', keywords: [] } };\n  \n  // Initialize research block\n  const researchBlock = {\n    topic: topicData.json.title,\n    pillar: topicData.json.pillar || 'General',\n    contentType: topicData.json.contentType || 'LinkedIn Post',\n    keywords: topicData.json.keywords || [],\n    aiComplexity: topicData.json.aiComplexity || 'Standard',\n    timestamp: new Date().toISOString(),\n    sources: {\n      youtube: { count: 0, data: [] },\n      twitter: { count: 0, data: [] },\n      forums: { count: 0, data: [] },\n      product: { count: 0, data: [] }\n    },\n    insights: {\n      trending_topics: [],\n      key_pain_points: [],\n      popular_solutions: [],\n      engagement_patterns: []\n    }\n  };\n  \n  // Process YouTube data\n  const youtubeInput = allInputs.find(item => item.json.source === 'youtube' || item.json.videos);\n  if (youtubeInput?.json?.videos?.length > 0) {\n    researchBlock.sources.youtube.count = youtubeInput.json.videos.length;\n    researchBlock.sources.youtube.data = youtubeInput.json.videos.slice(0, 15).map(video => ({\n      title: video.title || 'No title',\n      views: video.views || 0,\n      engagement: video.engagement || 0,\n      channel: video.channel || 'Unknown',\n      summary: video.description?.substring(0, 200) || ''\n    }));\n  }\n  \n  // Process Twitter data  \n  const twitterInput = allInputs.find(item => item.json.source === 'twitter' || item.json.posts);\n  if (twitterInput?.json?.posts?.length > 0) {\n    researchBlock.sources.twitter.count = twitterInput.json.posts.length;\n    researchBlock.sources.twitter.data = twitterInput.json.posts.slice(0, 20).map(post => ({\n      text: post.text || 'No content',\n      likes: post.likes || 0,\n      retweets: post.retweets || 0,\n      author: post.author || 'Unknown',\n      engagement_rate: ((post.likes || 0) + (post.retweets || 0)) / Math.max(1, post.followers || 1000)\n    }));\n  }\n  \n  // Process Forum data\n  const forumInput = allInputs.find(item => item.json.items);\n  if (forumInput?.json?.items?.length > 0) {\n    researchBlock.sources.forums.count = forumInput.json.items.length;\n    researchBlock.sources.forums.data = forumInput.json.items.slice(0, 10).map(item => ({\n      title: item.title || 'No title',\n      snippet: item.snippet || 'No content',\n      link: item.link || '',\n      source: item.displayLink || 'Unknown'\n    }));\n  }\n  \n  // Generate insights\n  const allText = [\n    ...researchBlock.sources.youtube.data.map(v => v.title + ' ' + v.summary),\n    ...researchBlock.sources.twitter.data.map(p => p.text),\n    ...researchBlock.sources.forums.data.map(f => f.title + ' ' + f.snippet)\n  ].join(' ').toLowerCase();\n  \n  // Extract trending topics (simple keyword frequency)\n  const words = allText.split(/\\s+/).filter(word => word.length > 4);\n  const wordFreq = {};\n  words.forEach(word => wordFreq[word] = (wordFreq[word] || 0) + 1);\n  researchBlock.insights.trending_topics = Object.entries(wordFreq)\n    .sort(([,a], [,b]) => b - a)\n    .slice(0, 10)\n    .map(([word, freq]) => ({ term: word, frequency: freq }));\n  \n  // Create comprehensive text summary for LLMs\n  let textSummary = `CONTENT ANALYSIS FOR: ${researchBlock.topic}\\n`;\n  textSummary += `PILLAR: ${researchBlock.pillar}\\n`;\n  textSummary += `COMPLEXITY: ${researchBlock.aiComplexity}\\n\\n`;\n  \n  if (researchBlock.sources.youtube.count > 0) {\n    textSummary += \"=== YOUTUBE INSIGHTS ===\\n\";\n    researchBlock.sources.youtube.data.forEach((video, i) => {\n      textSummary += `${i+1}. ${video.title} (${video.views} views, ${video.engagement} engagement)\\n`;\n      if (video.summary) textSummary += `   Summary: ${video.summary}\\n`;\n    });\n    textSummary += \"\\n\";\n  }\n  \n  if (researchBlock.sources.twitter.count > 0) {\n    textSummary += \"=== TWITTER/X INSIGHTS ===\\n\";\n    researchBlock.sources.twitter.data.forEach((post, i) => {\n      textSummary += `${i+1}. ${post.text} (${post.likes} likes, ${post.retweets} RTs)\\n`;\n    });\n    textSummary += \"\\n\";\n  }\n  \n  if (researchBlock.sources.forums.count > 0) {\n    textSummary += \"=== COMMUNITY DISCUSSIONS ===\\n\";\n    researchBlock.sources.forums.data.forEach((forum, i) => {\n      textSummary += `${i+1}. ${forum.title}\\n   ${forum.snippet}\\n   Source: ${forum.source}\\n\\n`;\n    });\n  }\n  \n  textSummary += \"=== TRENDING TOPICS ===\\n\";\n  researchBlock.insights.trending_topics.forEach(topic => {\n    textSummary += `- ${topic.term} (mentioned ${topic.frequency} times)\\n`;\n  });\n  \n  return {\n    json: {\n      research_block: researchBlock,\n      research_text: textSummary,\n      topic_data: topicData.json,\n      processing_status: 'success',\n      data_quality: calculateDataQuality(researchBlock)\n    }\n  };\n  \n} catch (error) {\n  return {\n    json: {\n      research_block: null,\n      research_text: 'Error compiling research data',\n      topic_data: $input.first().json,\n      processing_status: 'error',\n      error_message: error.message,\n      data_quality: 0\n    }\n  };\n}\n\nfunction calculateDataQuality(block) {\n  let score = 0;\n  if (block.sources.youtube.count > 0) score += 30;\n  if (block.sources.twitter.count > 0) score += 30;\n  if (block.sources.forums.count > 0) score += 20;\n  if (block.insights.trending_topics.length > 0) score += 20;\n  return Math.min(100, score);\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        80
+      ],
+      "id": "c7b0b987-3148-48eb-a3c3-fe93a21a62de",
+      "name": "Compile Research (Advanced)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "quality-check",
+              "leftValue": "={{ $json.data_quality }}",
+              "rightValue": 30,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "status-check",
+              "leftValue": "={{ $json.processing_status }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        700,
+        80
+      ],
+      "id": "769cdeb3-d74f-4c46-af17-c08891403d52",
+      "name": "Validate Research Quality"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $json.topic_data.aiComplexity === 'Deep' ? 'openai/gpt-4' : 'openai/gpt-4o-mini' }}"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": `You are BuildLabs' senior content strategist, specializing in ${$json.topic_data.pillar} content for solo founders and lean builders. BuildLabs creates lean, scalable digital products with minimal resources. Your expertise covers: Lean Build Guides, Product Teardowns, Bootstrapped Toolkits, Innovation Insights, Internal Learnings, and the Indian Product Landscape.\\n\\nBRAND VOICE: Authentic expertise, direct communication, empathetic to resource constraints, professional yet approachable. AVOID: Corporate jargon, M-dashes, overly formal language, generic advice.\\n\\nCONTENT TYPE: ${$json.topic_data.contentType}\\nTARGET PLATFORMS: ${$json.topic_data.targetPlatforms?.join(', ') || 'LinkedIn'}`\n  },\n  {\n    \"role\": \"user\", \n    \"content\": `Using this comprehensive research data, generate 3-5 high-impact content ideas:\\n\\n${$json.research_text}\\n\\nFor each idea, provide:\\n1. TITLE: Clear, compelling, keyword-optimized\\n2. HOOK: Scroll-stopping opening that addresses pain points\\n3. ANGLE: Unique perspective that differentiates from existing content\\n4. VALUE PROP: Specific benefit for solo founders/lean builders\\n5. FORMAT: Optimal content structure (post, thread, carousel)\\n6. CTA: Appropriate call-to-action for BuildLabs\\n\\nPrioritize ideas that:\\n- Address validated pain points from research\\n- Leverage trending topics naturally\\n- Provide actionable frameworks\\n- Build BuildLabs' authority in ${$json.topic_data.pillar}\\n- Suit ${$json.topic_data.contentType} format\\n\\nOutput as structured JSON array.`\n  }\n] }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": "={{ $json.topic_data.aiComplexity === 'Deep' ? 2000 : 1200 }}"
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        -20
+      ],
+      "id": "4a9c4264-e5f5-46b4-ba43-2a0fba7d7a54",
+      "name": "Generate Ideas (Advanced)"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "perplexity/llama-3.1-sonar-large-128k-online"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": \"You are a research validation specialist. Your job is to fact-check and enrich content with real-world data, statistics, case studies, and expert insights. Focus on actionable information relevant to solo founders and lean startups. Prevent AI hallucinations by citing specific sources and data points.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": `Validate and enrich this content with current data:\\n\\nTOPIC: ${$node['Compile Research (Advanced)'].json.topic_data.title}\\nPILLAR: ${$node['Compile Research (Advanced)'].json.topic_data.pillar}\\nCONTENT IDEAS: ${$node['Generate Ideas (Advanced)'].json.choices[0].message.content}\\n\\nPlease provide:\\n1. CURRENT STATISTICS: Recent data (2024-2025) relevant to the topic\\n2. CASE STUDIES: Real examples of successful implementations\\n3. FRAMEWORKS: Proven methodologies and approaches\\n4. EXPERT QUOTES: Insights from industry leaders\\n5. TOOLS & RESOURCES: Specific recommendations for lean builders\\n6. MARKET TRENDS: Latest developments in this space\\n7. PAIN POINT VALIDATION: Evidence that problems mentioned are real\\n\\nFocus on information that:\\n- Is current and verifiable\\n- Helps solo founders make informed decisions\\n- Provides concrete data points for content\\n- Supports BuildLabs' positioning as experts\\n\\nCite sources where possible.`\n  }\n] }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2000
+            },
+            {
+              "name": "temperature",
+              "value": 0.3
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        180
+      ],
+      "id": "b3364d2a-79e5-47f7-837f-89bf8eeb5616",
+      "name": "Validate Research (Perplexity)"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        80
+      ],
+      "id": "4e1fcd76-babe-45db-95a6-711ae8e56de4",
+      "name": "Merge Content & Research"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-linkedin",
+              "leftValue": "={{ $node['Compile Research (Advanced)'].json.topic_data.contentType }}",
+              "rightValue": "LinkedIn Post",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        -20
+      ],
+      "id": "abfcda18-e3b4-4ba5-8394-2e55166ec6ae",
+      "name": "Route: LinkedIn Content"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-thread",
+              "leftValue": "={{ $node['Compile Research (Advanced)'].json.topic_data.contentType }}",
+              "rightValue": "Thread",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        180
+      ],
+      "id": "ea3014fa-5559-4057-801a-b688960117b7",
+      "name": "Route: Thread Content"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "anthropic/claude-3-5-sonnet"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": `You are BuildLabs' LinkedIn content specialist and conversion copywriter. You create premium content for ${$node['Compile Research (Advanced)'].json.topic_data.pillar} that positions BuildLabs as the go-to resource for solo founders and lean builders.\\n\\nWRITING STYLE:\\n- Authentic expertise with direct communication\\n- Professional, thoughtful, research-backed\\n- Empathetic to resource constraints\\n- Zero corporate jargon or M-dashes\\n- Narrative-driven with actionable takeaways\\n- Clear value propositions\\n\\nLINKEDIN OPTIMIZATION:\\n- Hook that stops scrolling in first 2 lines\\n- Scannable format with short paragraphs\\n- Strategic line breaks for mobile\\n- Strong calls-to-action\\n- Professional tone suitable for B2B audience`\n  },\n  {\n    \"role\": \"user\",\n    \"content\": `Create a high-converting LinkedIn post (800-1300 words) using this validated content:\\n\\nCONTENT IDEAS: ${$node['Generate Ideas (Advanced)'].json.choices[0].message.content}\\n\\nRESEARCH VALIDATION: ${$node['Validate Research (Perplexity)'].json.choices[0].message.content}\\n\\nORIGINAL RESEARCH: ${$node['Compile Research (Advanced)'].json.research_text.substring(0, 1000)}\\n\\nREQUIREMENTS:\\n1. HOOK: Start with a compelling question or contrarian statement\\n2. STRUCTURE: Problem → Insight → Solution → Action\\n3. DATA: Include 2-3 specific statistics from research\\n4. FRAMEWORKS: Provide actionable steps or methodology\\n5. CREDIBILITY: Reference real examples or case studies\\n6. ENGAGEMENT: Ask thought-provoking questions\\n7. CTA: BuildLabs-appropriate call-to-action\\n\\nFORMAT:\\nTitle: [Compelling Title]\\nContent: [Full LinkedIn post]\\n\\nNO hashtags or emojis (added manually during review).\\nEnsure the post provides genuine value while subtly positioning BuildLabs' expertise.`\n  }\n] }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2500
+            },
+            {
+              "name": "temperature",
+              "value": 0.75
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        -20
+      ],
+      "id": "69fbc508-a4d7-476d-9e1e-358a554d5ded",
+      "name": "Draft LinkedIn (Claude)"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "anthropic/claude-3-5-sonnet"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": \"You are BuildLabs' X/Twitter thread specialist. You create viral, engaging threads that breakdown complex topics for solo founders. Your threads are tactical, witty, and highly shareable while maintaining BuildLabs' authentic expertise.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": `Create a high-engagement X thread using this content:\\n\\n${$node['Generate Ideas (Advanced)'].json.choices[0].message.content}\\n\\n${$node['Validate Research (Perplexity)'].json.choices[0].message.content}\\n\\nRequirements:\\n- 8-12 tweets maximum\\n- Each tweet under 280 characters\\n- Start with a hook tweet\\n- Include actionable steps\\n- Use strategic emojis\\n- End with a strong CTA\\n- Make it shareable\\n\\nFormat each tweet clearly numbered.`\n  }\n] }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 1500
+            },
+            {
+              "name": "temperature",
+              "value": 0.8
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        180
+      ],
+      "id": "4358694b-ff43-45d3-a2d8-537843346002",
+      "name": "Draft Thread (Claude)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "visual-required",
+              "leftValue": "={{ $node['Compile Research (Advanced)'].json.topic_data.visualRequired }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        80
+      ],
+      "id": "d60440cd-136f-4b8a-b659-c3abaf7dedf0",
+      "name": "Check Visual Required"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/images/generations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "openai/dall-e-3"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ `Create a professional, minimalist diagram for BuildLabs content about: ${$node['Compile Research (Advanced)'].json.topic_data.title}. Style: High-contrast black and white design with strategic yellow accents (#F59E0B), clean geometric shapes, modern tech aesthetic, suitable for LinkedIn. Content focus: ${$node['Compile Research (Advanced)'].json.topic_data.pillar}. No text overlays - visual communication only. Professional quality for solo founders and lean builders.` }}"
+            },
+            {
+              "name": "size",
+              "value": "1024x1024"
+            },
+            {
+              "name": "quality",
+              "value": "hd"
+            },
+            {
+              "name": "style",
+              "value": "natural"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        -20
+      ],
+      "id": "6e5a5b67-6340-415b-baff-689c3ce36da9",
+      "name": "Generate Visual (DALL-E)"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CANVA_API_URL }}/designs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.CANVA_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "design_type",
+              "value": "Instagram Post"
+            },
+            {
+              "name": "template_id",
+              "value": "{{ $env.CANVA_BUILDLABS_TEMPLATE_ID }}"
+            },
+            {
+              "name": "elements",
+              "value": "={{ {\n  \"background_image\": $node['Generate Visual (DALL-E)'].json.data[0].url,\n  \"title_text\": $node['Compile Research (Advanced)'].json.topic_data.title,\n  \"logo\": \"BuildLabs\",\n  \"accent_color\": \"#F59E0B\"\n} }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        180
+      ],
+      "id": "943d998a-15ff-416d-aa63-1de5ac3552d4",
+      "name": "Enhance Visual (Canva)"
+    },
+    {
+      "parameters": {
+        "folderId": "{{ $env.GOOGLE_DRIVE_FOLDER_ID }}"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        80
+      ],
+      "id": "0f2d35c7-2566-4e44-a0d6-92c54ecee693",
+      "name": "Save Content (Advanced)"
+    },
+    {
+      "parameters": {
+        "text": "🚀 *BuildLabs Content Ready for Review*",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2300,
+        80
+      ],
+      "id": "da78340f-cdd1-45bb-87ad-da3f7281238e",
+      "name": "Send Advanced Review",
+      "webhookId": "d8554141-092d-41e5-bd2d-ebaeedd11fcf"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approve-content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        80
+      ],
+      "id": "bee44bac-9aa1-4a03-978e-d40d00d760f8",
+      "name": "Advanced Approval Webhook",
+      "webhookId": "20dd3d83-5bc3-448b-bc03-e636d38121a2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-approved",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        80
+      ],
+      "id": "5098bdac-775b-40bd-bf30-776b689bd2bb",
+      "name": "Validate Approval"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-linkedin",
+              "leftValue": "={{ $node['Compile Research (Advanced)'].json.topic_data.targetPlatforms?.includes('LinkedIn') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        -20
+      ],
+      "id": "34b4c5d4-041e-451f-ada4-1888c1ce9f98",
+      "name": "Route: LinkedIn Publish"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-twitter",
+              "leftValue": "={{ $node['Compile Research (Advanced)'].json.topic_data.targetPlatforms?.includes('X') || $node['Compile Research (Advanced)'].json.topic_data.targetPlatforms?.includes('Twitter') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        180
+      ],
+      "id": "181859a5-1ec9-4481-b0f9-c33047ed07b7",
+      "name": "Route: X Publish"
+    },
+    {
+      "parameters": {
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [
+        3100,
+        -20
+      ],
+      "id": "786ced43-cea7-4de0-a9a4-89ff6e8d8dd9",
+      "name": "Publish LinkedIn (Advanced)"
+    },
+    {
+      "parameters": {
+        "text": "={{ $node['Draft Thread (Claude)'].json.choices[0].message.content.split('\\n').filter(line => line.trim().length > 0) }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        180
+      ],
+      "id": "7159e1a2-1431-4ce9-aa59-45bb6b008107",
+      "name": "Publish X (Advanced)"
+    },
+    {
+      "parameters": {
+        "url": "{{ $env.OPENROUTER_BASE_URL }}/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "google/gemini-pro"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": \"You are BuildLabs' content repurposing specialist. Transform successful content into multiple formats while maintaining brand voice and optimizing for each platform's unique audience and algorithm.\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": `Repurpose this content into additional formats:\\n\\nLINKEDIN: ${$node['Draft LinkedIn (Claude)']?.json?.choices?.[0]?.message?.content || ''}\\nTHREAD: ${$node['Draft Thread (Claude)']?.json?.choices?.[0]?.message?.content || ''}\\n\\nCreate:\\n1. THREADS POST: Casual, conversational question (50-100 words)\\n2. BLOG OUTLINE: SEO-optimized structure (500-800 words)\\n3. EMAIL NEWSLETTER: Value-driven excerpt (200 words)\\n4. CAROUSEL SLIDES: 5-7 key points for visual presentation\\n\\nFormat as JSON with clear sections.`\n  }\n] }}"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2000
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        80
+      ],
+      "id": "6011c43c-83e4-4d1e-a327-9148412d8fcc",
+      "name": "Repurpose Content (Advanced)"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NOTION_API_URL }}/pages/{{ $node['Fetch Content Topics'].json.results[0].id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "={{ {\n  \"Status\": {\n    \"select\": {\n      \"name\": \"Published\"\n    }\n  },\n  \"Published Date\": {\n    \"date\": {\n      \"start\": new Date().toISOString().split('T')[0]\n    }\n  },\n  \"Content Document\": {\n    \"url\": ($node['Save Content (Advanced)'].json.webViewLink || '')\n  },\n  \"LinkedIn Post ID\": {\n    \"rich_text\": [\n      {\n        \"text\": {\n          \"content\": ($node['Publish LinkedIn (Advanced)']?.json?.id || 'Published')\n        }\n      }\n    ]\n  },\n  \"Research Quality\": {\n    \"number\": ($node['Compile Research (Advanced)'].json.data_quality || 0)\n  },\n  \"Platforms Published\": {\n    \"multi_select\": [\n      ...($node['Publish LinkedIn (Advanced)'] ? [{\"name\": \"LinkedIn\"}] : []),\n      ...($node['Publish X (Advanced)'] ? [{\"name\": \"X\"}] : [])\n    ]\n  }\n} }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3500,
+        -20
+      ],
+      "id": "97c43034-9ab0-41ac-b233-2bf19cebec49",
+      "name": "Update Notion (Advanced)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        3500,
+        180
+      ],
+      "id": "0ecae1b1-2c75-4186-b526-1e0759d5e513",
+      "name": "Log Analytics Data"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.GOOGLE_SHEETS_API_URL }}/spreadsheets/{{ $env.ANALYTICS_SHEET_ID }}/values/Content_Log:append",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "valueInputOption",
+              "value": "RAW"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "values",
+              "value": "={{ [[\n  ($json.published_date || new Date().toISOString()),\n  ($json.topic_title || 'Untitled'),\n  ($json.content_type || 'Unknown'),\n  ($json.pillar || 'General'),\n  ($json.platforms_published || 'None'),\n  ($json.research_quality || 0),\n  ($json.google_doc_url || ''),\n  'Published',\n  ($json.topic_id || '')\n]] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3700,
+        180
+      ],
+      "id": "9d1b2a23-f993-498f-9ad7-079720bee576",
+      "name": "Log to Analytics Sheet"
+    },
+    {
+      "parameters": {
+        "text": "✅ *Content Successfully Published!*",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        3900,
+        80
+      ],
+      "id": "36ec836f-db28-49fb-96d2-533c6452a182",
+      "name": "Success Notification (Advanced)",
+      "webhookId": "ccbdd8da-0837-4f75-b0da-fa8c8509d3e6"
+    },
+    {
+      "parameters": {
+        "text": "⚠️ *Content Generation Failed*",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        -500,
+        580
+      ],
+      "id": "0ecd79b0-daf6-4ad4-89b7-8adbdafae86c",
+      "name": "Error Notification",
+      "webhookId": "8a3dce22-afcc-4291-8255-0f6a16b2f175"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fallback content generation for low-quality research\nconst topicData = $json.topic_data || {};\nconst fallbackContent = {\n  title: `Quick Insight: ${topicData.title || 'BuildLabs Update'}`,\n  content: `Based on our research into ${topicData.title || 'this topic'}, here are key insights for solo founders:\\n\\n• Research quality was below threshold (${$json.data_quality}%)\\n• Manual review and additional research recommended\\n• Consider alternative topic or deeper research\\n\\nThis is a fallback post generated when automated research doesn't meet our quality standards. We prioritize value over volume at BuildLabs.\\n\\nWhat topics would you like us to dive deeper into?`,\n  platforms: ['LinkedIn'],\n  requiresManualReview: true,\n  isFallback: true\n};\n\nreturn { json: fallbackContent };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        280
+      ],
+      "id": "60bd1c69-9b5b-45b3-94f4-f4b5ab7dbea5",
+      "name": "Fallback Content Generator"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Main Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Trigger Merger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Content Trigger": {
+      "main": [
+        [
+          {
+            "node": "Trigger Merger",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Trigger Merger": {
+      "main": [
+        [
+          {
+            "node": "Route Emergency Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Emergency Content": {
+      "main": [
+        [
+          {
+            "node": "Fetch Content Topics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Content Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Content Topics": {
+      "main": [
+        [
+          {
+            "node": "Validate Topics Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Topics Available": {
+      "main": [
+        [
+          {
+            "node": "Classify Content Types",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Content Types": {
+      "main": [
+        [
+          {
+            "node": "Route: Standard Content",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route: Product Teardown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route: X Thread",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route: Emergency Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Standard Content": {
+      "main": [
+        [
+          {
+            "node": "Research: YouTube (Standard)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Research: X/Twitter (Standard)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Research: Forums (Standard)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Product Teardown": {
+      "main": [
+        [
+          {
+            "node": "Research: Product Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research: YouTube (Standard)": {
+      "main": [
+        [
+          {
+            "node": "Merge: Standard Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research: X/Twitter (Standard)": {
+      "main": [
+        [
+          {
+            "node": "Merge: Standard Research",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Standard Research": {
+      "main": [
+        [
+          {
+            "node": "Compile Research (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Research (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Validate Research Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Research Quality": {
+      "main": [
+        [
+          {
+            "node": "Generate Ideas (Advanced)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Validate Research (Perplexity)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Content Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Ideas (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Merge Content & Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Research (Perplexity)": {
+      "main": [
+        [
+          {
+            "node": "Merge Content & Research",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Content & Research": {
+      "main": [
+        [
+          {
+            "node": "Route: LinkedIn Content",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route: Thread Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: LinkedIn Content": {
+      "main": [
+        [
+          {
+            "node": "Draft LinkedIn (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Thread Content": {
+      "main": [
+        [
+          {
+            "node": "Draft Thread (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft LinkedIn (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Check Visual Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Thread (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Check Visual Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Visual Required": {
+      "main": [
+        [
+          {
+            "node": "Generate Visual (DALL-E)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Content (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Visual (DALL-E)": {
+      "main": [
+        [
+          {
+            "node": "Enhance Visual (Canva)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhance Visual (Canva)": {
+      "main": [
+        [
+          {
+            "node": "Save Content (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Content (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Send Advanced Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advanced Approval Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Approval": {
+      "main": [
+        [
+          {
+            "node": "Route: LinkedIn Publish",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Route: X Publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: LinkedIn Publish": {
+      "main": [
+        [
+          {
+            "node": "Publish LinkedIn (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: X Publish": {
+      "main": [
+        [
+          {
+            "node": "Publish X (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish LinkedIn (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Repurpose Content (Advanced)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Notion (Advanced)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Analytics Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish X (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Repurpose Content (Advanced)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Analytics Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repurpose Content (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Success Notification (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion (Advanced)": {
+      "main": [
+        [
+          {
+            "node": "Success Notification (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Analytics Data": {
+      "main": [
+        [
+          {
+            "node": "Log to Analytics Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Analytics Sheet": {
+      "main": [
+        [
+          {
+            "node": "Success Notification (Advanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "972ad16e-a8c3-4427-964e-df6b01311acb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac775bbe2b71259e04479bbc531f549c733dc4ab07a29d5196b548216b9473e1"
+  },
+  "id": "sZWNqIcPWo7xisT8",
+  "tags": [
+    {
+      "createdAt": "2025-06-18T06:01:01.013Z",
+      "updatedAt": "2025-06-18T06:01:01.013Z",
+      "id": "CUr55QSTntG7N3Iq",
+      "name": "BuildLabs Advanced"
+    },
+    {
+      "createdAt": "2025-06-18T05:40:41.962Z",
+      "updatedAt": "2025-06-18T05:40:41.962Z",
+      "id": "wIIohcJ5lIYB9omK",
+      "name": "BuildLabs Content"
+    }
+  ]
+}
